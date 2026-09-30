@@ -224,6 +224,19 @@ def _population(center: tuple[float, float], radius_m: int, session: Session) ->
     return res, ids
 
 
+def _named_sources(geo_id, elev_ids, infra_id, counts_id, pop_ids, street_slope: bool) -> dict[str, str]:
+    join = ", ".join
+    named = {
+        "ubicación de la zona": geo_id,
+        "pendiente del terreno": join(elev_ids),
+        "pendiente de las calles": join(elev_ids + [infra_id]) if street_slope else "no disponible",
+        "calles e infraestructura ciclista": infra_id,
+        "edificios, comercios y paradas": counts_id,
+        "población": join(pop_ids) if pop_ids else "no disponible",
+    }
+    return named
+
+
 def build_profile(place: str, session: Session, radius_m: int = 1500, grid_n: int | None = None) -> dict:
     key = (place.strip().lower(), radius_m)
     if key in session.profiles:
@@ -246,12 +259,11 @@ def build_profile(place: str, session: Session, radius_m: int = 1500, grid_n: in
     slopes = slope_stats(pts, elevs)
 
     d_infra, m_infra = sources.overpass(infra_query(center[0], center[1], radius_m))
-    ids.append(
-        session.prov.add(
-            "red viaria", "Overpass API (OpenStreetMap)", m_infra,
-            "Calles, carriles bici y vías peatonales con geometría.", sources.LICENSES["overpass"],
-        )
+    infra_id = session.prov.add(
+        "red viaria", "Overpass API (OpenStreetMap)", m_infra,
+        "Calles, carriles bici y vías peatonales con geometría.", sources.LICENSES["overpass"],
     )
+    ids.append(infra_id)
     infra = parse_infra(d_infra, center, radius_m)
     grades = None
     if elev_source == "mdt_lidar_25m":
@@ -264,12 +276,11 @@ def build_profile(place: str, session: Session, radius_m: int = 1500, grid_n: in
         grades = street_grades(d_infra, center, radius_m, elev_at)
 
     d_counts, m_counts = sources.overpass(counts_query(center[0], center[1], radius_m))
-    ids.append(
-        session.prov.add(
-            "recuentos", "Overpass API (OpenStreetMap)", m_counts,
-            "Edificios, comercios, hostelería/servicios, oficinas y paradas.", sources.LICENSES["overpass"],
-        )
+    counts_id = session.prov.add(
+        "recuentos", "Overpass API (OpenStreetMap)", m_counts,
+        "Edificios, comercios, hostelería/servicios, oficinas y paradas.", sources.LICENSES["overpass"],
     )
+    ids.append(counts_id)
     counts = parse_counts(d_counts)
 
     pop, pop_ids = _population(center, radius_m, session)
@@ -317,6 +328,8 @@ def build_profile(place: str, session: Session, radius_m: int = 1500, grid_n: in
         "population_source": "eustat_secciones_2025" if pop else None,
         "definition_note": DEFINITION_NOTE,
         "source_ids": ids,
+        # Qué fuente respalda cada dato, para que el agente cite el id correcto.
+        "sources": _named_sources(ids[0], elev_ids, infra_id, counts_id, pop_ids, grades is not None),
     }
     session.profiles[key] = profile
     return profile

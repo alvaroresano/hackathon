@@ -8,7 +8,7 @@ Estos límites aparecen también en cada informe y los devuelve la herramienta `
 3. **Agua:** los puntos con cota ≤ 0,5 m se tratan como agua (el MDT da 0 m en el mar). Un terreno real a esa cota (playas, marismas) también se excluye.
 4. **Población repartida por área:** la población de cada sección censal (Eustat, 01/01/2025) se reparte en proporción al área que cae en el círculo, suponiendo que es uniforme dentro de la sección. La cifra es la población **del círculo**, no la del municipio.
 5. **Solo Gipuzkoa:** la parte del círculo en Francia, Navarra o Bizkaia no tiene población ni cuenta como superficie (afecta sobre todo a Irun y Hondarribia). La capa de secciones es de 2026 y la población de 2025; una sección nueva de Irun no tiene población.
-6. **OpenStreetMap es desigual:** la cobertura y el etiquetado del carril bici varían. "Cero km de infraestructura" puede ser real o una falta de etiquetado; el sistema lo avisa, pero no puede distinguirlo. Aún no se ha contrastado con la capa municipal de bidegorris.
+6. **OpenStreetMap es desigual:** la cobertura y el etiquetado del carril bici varían. "Cero km de infraestructura" puede ser real o una falta de etiquetado; el sistema lo avisa, pero no puede distinguirlo. En Donostia, OSM da entre un 16 % y un 40 % más km que la capa municipal de bidegorris, aunque ordena las 5 zonas igual (ver `docs/validacion.md`); fuera de Donostia no hay capa oficial con la que contrastar.
 7. **Proxies de demanda de reparto:** comercios y oficinas por km² no son pedidos. No hay datos de movilidad real por zona: la Encuesta de Movilidad 2021 solo da el reparto modal por territorio histórico (en Gipuzkoa, 42.131 de 1.919.297 desplazamientos diarios en bici, un 2,2 %).
 8. **Datos consultados en una fecha:** OSM cambia; cada fuente lleva su fecha de consulta o de descarga (`data/fuentes.yaml`). La URL exacta de la tabla de población de Eustat está pendiente de anotar.
 
@@ -20,7 +20,7 @@ Estos límites aparecen también en cada informe y los devuelve la herramienta `
 13. **No modela** costes, tiempo de viaje, seguridad vial ni competencia entre modos.
 
 ## Del agente
-14. **El modelo de lenguaje puede equivocarse al redactar.** La verificación de cifras detecta números sin respaldo, pero no valida el razonamiento ni la interpretación.
+14. **El modelo de lenguaje puede equivocarse al redactar.** Con `qwen3:14b` se han visto fuentes mal citadas y cifras de una zona atribuidas a otra; también explicaciones comparativas falsas y cifras de memoria. Se han mitigado con fuentes por dato, veredicto calculado, verificación por zona, autocorrección y razonamiento interno, pero no eliminado: la verificación no detecta afirmaciones falsas cuyas cifras son correctas. La verificación de cifras detecta números sin respaldo, pero no valida el razonamiento ni la interpretación.
 15. **Dependencia de servicios externos:** si una API falla o limita el uso, el agente lo informa y no rellena huecos. Con la caché poblada puede funcionar sin conexión.
 
 ## Qué se ha comprobado y qué no (30-sep-2026)

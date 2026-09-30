@@ -1,7 +1,11 @@
 """Herramientas que el agente puede llamar. Cada una devuelve datos verificables y ids de fuente."""
 from __future__ import annotations
 
-from . import scoring
+import re
+import unicodedata
+from pathlib import Path
+
+from . import local_data, scoring
 from .http import DataUnavailable
 from .profile import DEFINITION_NOTE, build_profile
 from .session import Session
@@ -76,6 +80,18 @@ TOOL_SPECS = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
+        "name": "get_municipal_population",
+        "description": (
+            "Población oficial de un municipio de Gipuzkoa a 01/01/2025 (Eustat, suma de sus secciones censales). "
+            "Úsala cuando pregunten por los habitantes de un municipio: es distinta de la población del círculo de una zona."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"municipality": {"type": "string", "description": "Nombre del municipio, p. ej. 'Eibar'."}},
+            "required": ["municipality"],
+        },
+    },
+    {
         "name": "list_sources",
         "description": "Lista las fuentes consultadas en esta sesión (id, proveedor, URL, fecha y licencia).",
         "input_schema": {"type": "object", "properties": {}},
@@ -83,28 +99,110 @@ TOOL_SPECS = [
 ]
 
 
+ZONES_FILE = Path(__file__).resolve().parent.parent / "config" / "zones.txt"
+
+
+def known_zones() -> list[str]:
+    if not ZONES_FILE.exists():
+        return []
+    lines = ZONES_FILE.read_text(encoding="utf-8").splitlines()
+    return [ln.strip() for ln in lines if ln.strip() and not ln.startswith("#")]
+
+
+def canonical_place(place: str) -> str:
+    """'Amara' -> 'Amara, Donostia' si es el nombre corto de una única zona conocida (config/zones.txt).
+
+    Así el agente no geocodifica un barrio sin su municipio (caso real con qwen3:14b, 30-sep-2026).
+    """
+    p = place.strip()
+    zones = known_zones()
+    if p.lower() in (z.lower() for z in zones):
+        return p
+    matches = [z for z in zones if z.split(",")[0].strip().lower() == p.lower()]
+    return matches[0] if len(matches) == 1 else p
+
+
+def verdict_text(analysis: dict, cfg: dict) -> str:
+    """Veredicto listo para citar: el vehículo recomendado o que ninguno encaja."""
+    best = analysis["ranking"][0]
+    label = cfg["vehicles"][best["vehicle"]]["label"]
+    if analysis["suitable"]:
+        return f"Recomendado: {label}"
+    return (
+        f"Ningún vehículo adecuado: el mejor puntuado ({label}) obtiene {best['score']} "
+        f"y el mínimo es {analysis['min_suitable_score']}"
+    )
+
+
 def _zone_result(place: str, use_case: str, radius_m: int, session: Session) -> dict:
+    place = canonical_place(place)
     profile = build_profile(place, session, radius_m=radius_m)
     analysis = scoring.analyze(profile["metrics"], use_case, session.cfg)
-    return {
+    best = analysis["recommended"]
+    out = {
         "place": place,
         "resolved_as": profile["resolved_as"],
         "radius_m": radius_m,
+        "verdict": verdict_text(analysis, session.cfg),
         "metrics": profile["metrics"],
         "elevation_source": profile.get("elevation_source"),
         **analysis,
+        # Si ningún vehículo es adecuado, no hay recomendación: el primero va en best_scored.
+        "recommended": best if analysis["suitable"] else None,
+        "best_scored": best,
+        "sources": profile.get("sources", {}),
         "source_ids": profile["source_ids"],
     }
+    session.record_zone(place, out)
+    return out
 
 
 def _tool_get_zone_profile(args: dict, session: Session) -> dict:
-    return build_profile(args["place"], session, radius_m=int(args.get("radius_m", 1500)))
+    place = canonical_place(args["place"])
+    p = build_profile(place, session, radius_m=int(args.get("radius_m", 1500)))
+    session.record_zone(place, p)
+    return p
 
 
 def _tool_rank(args: dict, session: Session) -> dict:
     if args["use_case"] not in USE_CASES:
         return {"error": f"use_case debe ser uno de {USE_CASES}", "kind": "invalid_input"}
     return _zone_result(args["place"], args["use_case"], int(args.get("radius_m", 1500)), session)
+
+
+def compact_zone(r: dict) -> dict:
+    """Resumen de una zona para compare_zones y los informes. Los nombres dicen qué se mide."""
+    m = r["metrics"]
+    return {
+        "place": r["place"],
+        "resolved_as": r["resolved_as"],
+        "verdict": r["verdict"],
+        "recommended": r["recommended"],
+        "best_scored": r["best_scored"],
+        "suitable": r["suitable"],
+        "score": r["ranking"][0]["score"],
+        # Puntos que aporta cada característica al mejor puntuado: es la explicación del resultado.
+        "score_breakdown": r["ranking"][0]["contributions"],
+        "runner_up": r["ranking"][1]["vehicle"] if len(r["ranking"]) > 1 else None,
+        "runner_up_score": r["ranking"][1]["score"] if len(r["ranking"]) > 1 else None,
+        "margin": r["margin"],
+        "robustness": r["robustness"],
+        "confidence": r["confidence"],
+        "confidence_reason": r["confidence_reason"],
+        "quality_flags": r["quality_flags"],
+        "street_slope_median_pct": m.get("street_slope_median_pct"),
+        "terrain_slope_median_pct": m["slope_median_pct"],
+        "terrain_slope_p90_pct": m["slope_p90_pct"],
+        "slope_basis": r["slope_basis"],
+        "cycle_share": m["cycle_share"],
+        "population_in_circle": m.get("population"),
+        "pop_per_km2": m.get("pop_per_km2"),
+        "land_share": m.get("land_share"),
+        "density_basis": r["density_basis"],
+        "buildings_per_km2": m["buildings_per_km2"],
+        "poi_per_km2": m["poi_per_km2"],
+        "sources": r["sources"],
+    }
 
 
 def _tool_compare(args: dict, session: Session) -> dict:
@@ -114,35 +212,38 @@ def _tool_compare(args: dict, session: Session) -> dict:
     zones, errors = [], []
     for place in args["places"]:
         try:
-            r = _zone_result(place, args["use_case"], radius, session)
-            zones.append(
-                {
-                    "place": place,
-                    "recommended": r["recommended"],
-                    "suitable": r["suitable"],
-                    "score": r["ranking"][0]["score"],
-                    "runner_up": r["ranking"][1]["vehicle"] if len(r["ranking"]) > 1 else None,
-                    "margin": r["margin"],
-                    "robustness": r["robustness"],
-                    "confidence": r["confidence"],
-                    "quality_flags": r["quality_flags"],
-                    "median_slope_pct": r["metrics"]["slope_median_pct"],
-                    "street_slope_median_pct": r["metrics"].get("street_slope_median_pct"),
-                    "slope_basis": r["slope_basis"],
-                    "cycle_share": r["metrics"]["cycle_share"],
-                    "buildings_per_km2": r["metrics"]["buildings_per_km2"],
-                    "population": r["metrics"].get("population"),
-                    "pop_per_km2": r["metrics"].get("pop_per_km2"),
-                    "density_basis": r["density_basis"],
-                    "land_share": r["metrics"].get("land_share"),
-                    "poi_per_km2": r["metrics"]["poi_per_km2"],
-                    "resolved_as": r["resolved_as"],
-                    "source_ids": r["source_ids"],
-                }
-            )
+            zones.append(compact_zone(_zone_result(place, args["use_case"], radius, session)))
         except (DataUnavailable, LookupError) as exc:
-            errors.append({"place": place, "error": str(exc)})
+            errors.append({"place": canonical_place(place), "error": str(exc)})
     return {"use_case": args["use_case"], "radius_m": radius, "zones": zones, "errors": errors}
+
+
+def _norm(name: str) -> str:
+    return unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower().strip()
+
+
+def _tool_municipal_population(args: dict, session: Session) -> dict:
+    status = local_data.population_status()
+    if status:
+        return {"error": status, "kind": "data_unavailable"}
+    table = local_data.municipal_population()
+    wanted = _norm(args["municipality"])
+    # 'Donostia' casa con 'Donostia / San Sebastián'; 'Mondragón' con 'Arrasate/Mondragón'
+    found = [n for n in table if wanted in [_norm(x) for x in re.split(r"\s*/\s*", n)] or _norm(n) == wanted]
+    if not found:
+        return {"error": f"'{args['municipality']}' no es un municipio de Gipuzkoa en la tabla de Eustat.", "kind": "not_found"}
+    name = found[0]
+    m = local_data.source_meta("poblacion")
+    sid = session.prov.add("población", m["provider"], m, f"Población municipal de {name}.", m["license"])
+    item = table[name]
+    return {
+        "municipality": name,
+        "population": item["population"],
+        "reference_date": "2025-01-01",
+        "census_sections": item["sections"],
+        "note": "Población de todo el municipio. No es la población del círculo de 1.500 m que usan las zonas.",
+        "source_id": sid,
+    }
 
 
 def _tool_explain_method(args: dict, session: Session) -> dict:
@@ -168,10 +269,23 @@ def _tool_explain_method(args: dict, session: Session) -> dict:
             "street_share_over_6pct": "fracción de la longitud de calles con tramos de más del 6 %",
             "land_share": "fracción del círculo cubierta por secciones censales de Gipuzkoa (el resto es mar o territorio vecino)",
             "suitable": "false si la mejor puntuación no llega a min_suitable_score: ningún vehículo encaja bien",
+            "verdict": "frase lista para citar con la recomendación, o con el aviso de que ningún vehículo es adecuado",
+            "recommended": "vehículo recomendado; null si ningún vehículo es adecuado (el mejor puntuado va en best_scored)",
+            "population_in_circle": "igual que population: habitantes dentro del círculo, no del municipio",
+            "sources": "id de fuente (S#) que respalda cada tipo de dato de la zona",
+            "score_breakdown": "puntos que aporta cada característica a la puntuación del mejor vehículo (suman la puntuación)",
+            "features": {
+                "flatness": "planitud: 1 si la pendiente de calles está por debajo del umbral inferior del vehículo",
+                "infra": "infraestructura ciclista (cycle_share)",
+                "density": "densidad de población (pop_per_km2) o, sin Eustat, de edificios",
+                "goods_demand": "demanda de reparto: comercios, hostelería y oficinas por km² (poi_per_km2)",
+                "openness": "espacio libre para el dron: inverso de la densidad",
+                "steepness": "relieve abrupto (p90 de la pendiente del terreno): ventaja del dron",
+                "low_infra": "poca infraestructura ciclista: ventaja relativa del dron",
+            },
             "density": "característica de densidad: usa pop_per_km2 si existe; si no, buildings_per_km2",
         },
         "not_available": [
-            "Población municipal total (la herramienta da la población dentro del círculo de la zona, no la del municipio).",
             "Viajes reales por modo en cada zona.",
             "Normativa de drones por zona (ENAIRE).",
         ],
@@ -188,6 +302,7 @@ _DISPATCH = {
     "get_zone_profile": _tool_get_zone_profile,
     "rank_vehicles_for_zone": _tool_rank,
     "compare_zones": _tool_compare,
+    "get_municipal_population": _tool_municipal_population,
     "explain_method": _tool_explain_method,
     "list_sources": _tool_list_sources,
 }

@@ -45,6 +45,11 @@ def _collect_numbers(obj, acc: list[float]) -> None:
         return
     if isinstance(obj, (int, float)):
         acc.append(float(obj))
+    elif isinstance(obj, str):
+        # Cifras dentro de textos de las herramientas (notas, veredictos): "círculo de 1.500 m".
+        from .verify import numbers_in_text
+
+        acc.extend(numbers_in_text(obj))
     elif isinstance(obj, dict):
         for v in obj.values():
             _collect_numbers(v, acc)
@@ -59,6 +64,7 @@ class Session:
         self.prov = Provenance()
         self.profiles: dict[tuple, dict] = {}
         self.tool_numbers: list[float] = []
+        self.zone_numbers: dict[str, list[float]] = {}
         self.events: list[dict] = []
         self.run_dir = Path(run_dir) if run_dir else None
         self.started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -74,3 +80,7 @@ class Session:
 
     def record_tool_output(self, output: dict) -> None:
         _collect_numbers(output, self.tool_numbers)
+
+    def record_zone(self, place: str, output: dict) -> None:
+        """Cifras de una zona concreta, para detectar en la respuesta cifras atribuidas a otra zona."""
+        _collect_numbers(output, self.zone_numbers.setdefault(place, []))

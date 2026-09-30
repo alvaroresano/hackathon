@@ -83,3 +83,8 @@ def test_low_best_score_is_not_suitable():
     assert r["ranking"][0]["score"] < CFG["min_suitable_score"]
     assert r["suitable"] is False
     assert scoring.analyze(synthetic_metrics(), "personas", CFG)["suitable"] is True
+
+
+def test_confidence_reason_is_computed():
+    r = scoring.analyze(synthetic_metrics(), "personas", CFG)
+    assert "margen de" in r["confidence_reason"] and "%" in r["confidence_reason"]

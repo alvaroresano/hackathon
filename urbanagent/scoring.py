@@ -107,6 +107,19 @@ def confidence_label(robustness: float, margin: float | None, cfg: dict, flags: 
     return ["baja", "media", "alta"][level]
 
 
+def confidence_reason(robustness: float, margin: float | None, flags: list[str]) -> str:
+    """Motivo de la etiqueta de confianza, calculado (el modelo de lenguaje no debe deducirlo)."""
+    parts = []
+    if margin is not None:
+        parts.append(f"margen de {round(margin, 1)} puntos sobre el segundo vehículo")
+    parts.append(f"la recomendación se mantiene en el {round(robustness * 100)} % de las variaciones de pesos")
+    if flags:
+        parts.append(f"{len(flags)} alerta(s) de calidad de datos (bajan un nivel)")
+    else:
+        parts.append("sin alertas de calidad de datos")
+    return "; ".join(parts)
+
+
 def analyze(metrics: dict, use_case: str, cfg: dict) -> dict:
     weights = _weights(cfg, use_case)
     if not weights:
@@ -156,5 +169,6 @@ def analyze(metrics: dict, use_case: str, cfg: dict) -> dict:
         "sensitivity_delta": delta,
         "sensitivity_runs": total,
         "confidence": confidence_label(robustness, margin, cfg, flags),
+        "confidence_reason": confidence_reason(robustness, margin, flags),
         "quality_flags": flags,
     }

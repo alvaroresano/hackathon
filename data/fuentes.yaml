@@ -22,6 +22,7 @@ poblacion:
   file: xls0011434_c.csv
   provider: "Eustat · Censo de población y viviendas: población de Gipuzkoa por distritos y secciones censales, 01/01/2025"
   url: "https://www.eustat.eus/elementos/tbl0011434_c.html"
+  downloaded: "2026-09-30"
   license: "Fuente: Eustat. Cite la fuente."
   used_for: "habitantes por sección censal (544 secciones, 724.797 habitantes en Gipuzkoa)"
 

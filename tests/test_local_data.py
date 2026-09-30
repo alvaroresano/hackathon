@@ -97,3 +97,9 @@ def test_profile_uses_local_data_when_available(monkeypatch):
     assert m["density_area_km2"] == pytest.approx(m["area_km2"] * m["land_share"], rel=0.02)
     assert m["pop_per_km2"] == pytest.approx(35000 / (6 * 3.5), rel=0.02)  # densidad de la sección
     assert len(p["source_ids"]) == 6
+
+
+def test_municipal_population_sums_sections():
+    t = local_data.parse_municipal_population(CSV_EUSTAT)
+    assert t["Uno"] == {"code": "001", "population": 1500, "sections": 3}
+    assert t["Dos"]["population"] == 50

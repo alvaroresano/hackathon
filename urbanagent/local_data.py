@@ -133,6 +133,33 @@ def parse_population_csv(text: str) -> dict[str, int]:
     return out
 
 
+def parse_municipal_population(text: str) -> dict[str, dict]:
+    """Población de cada municipio: suma de sus secciones. Devuelve {nombre: {"code", "population", "sections"}}."""
+    names: dict[int, str] = {}
+    for r in csv.reader(io.StringIO(text), delimiter=";"):
+        if len(r) >= 2 and r[0].strip().isdigit() and r[1].strip():
+            names[int(r[0])] = r[1].strip()
+    out: dict[str, dict] = {}
+    for code, pop in parse_population_csv(text).items():
+        muni = int(code[:3])
+        item = out.setdefault(names.get(muni, code[:3]), {"code": f"{muni:03d}", "population": 0, "sections": 0})
+        item["population"] += pop
+        item["sections"] += 1
+    return out
+
+
+@lru_cache(maxsize=1)
+def municipal_population() -> dict[str, dict]:
+    return parse_municipal_population(_path("poblacion").read_text(encoding="utf-8-sig"))
+
+
+def population_status() -> str | None:
+    p = _path("poblacion")
+    if p is None or not p.exists():
+        return "no está la tabla de población de Eustat; ver data/fuentes.yaml"
+    return None
+
+
 class Sections:
     """Polígonos de sección censal (UTM) con su población."""
 

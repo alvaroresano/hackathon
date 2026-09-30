@@ -24,7 +24,7 @@ def _verdict(cfg: dict, z: dict) -> str:
     """Recomendación, o aviso de que ningún vehículo alcanza la puntuación mínima."""
     if z.get("suitable", True):
         return _vehicle_label(cfg, z["recommended"])
-    return f"Ninguno adecuado (mejor: {_vehicle_label(cfg, z['recommended'])})"
+    return f"Ninguno adecuado (mejor: {_vehicle_label(cfg, z['best_scored'])})"
 
 
 def _fmt(v) -> str:
@@ -73,8 +73,8 @@ def render_markdown(results: dict, session, question: str = "") -> str:
     ]
     for z in zones:
         lines.append(
-            f"| {z['place']} | {z.get('resolved_as', '')} | {_fmt(z.get('street_slope_median_pct'))} | {z['median_slope_pct']} | {z['cycle_share']} | "
-            f"{_fmt(z.get('population'))} | {_fmt(z.get('pop_per_km2'))} | {_fmt(z.get('land_share'))} | "
+            f"| {z['place']} | {z.get('resolved_as', '')} | {_fmt(z.get('street_slope_median_pct'))} | {z['terrain_slope_median_pct']} | {z['cycle_share']} | "
+            f"{_fmt(z.get('population_in_circle'))} | {_fmt(z.get('pop_per_km2'))} | {_fmt(z.get('land_share'))} | "
             f"{z['buildings_per_km2']} | {z['poi_per_km2']} |"
         )
 

@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
+import requests
+
 from . import local_data, sources
-from .agent import AnthropicBackend, OpenAICompatBackend, run_agent
+from .agent import OllamaBackend, ollama_model, ollama_url, run_agent
 from .http import DataUnavailable
 from .report import render_html, render_markdown
 from .session import Session
@@ -28,6 +29,19 @@ def _load_zones(args) -> list[str]:
 def _new_session(out_dir: Path) -> Session:
     run_dir = out_dir / "runs" / datetime.now().strftime("%Y%m%d-%H%M%S")
     return Session(run_dir=run_dir)
+
+
+def _ollama_status() -> str:
+    """Estado de Ollama y del modelo configurado (no afecta al resultado de doctor: 'analyze' no lo necesita)."""
+    model = ollama_model()
+    try:
+        tags = requests.get(f"{ollama_url()}/api/tags", timeout=5).json()
+    except (requests.RequestException, ValueError):
+        return f"AVISO Ollama: no responde en {ollama_url()} (arránquelo con 'ollama serve'; 'analyze' funciona sin él)"
+    names = {m.get("name") for m in tags.get("models", [])}
+    if model in names or f"{model}:latest" in names:
+        return f"OK    Ollama: modelo {model} disponible"
+    return f"AVISO Ollama: responde, pero falta el modelo {model} (ejecute 'ollama pull {model}')"
 
 
 def cmd_doctor(args) -> int:
@@ -52,7 +66,7 @@ def cmd_doctor(args) -> int:
     print()
     for name, status in (("MDT LiDAR 25 m (pendiente)", local_data.dem_status()), ("Secciones y población Eustat", local_data.sections_status())):
         print(f"  {'OK   ' if status is None else 'AVISO'} {name}: {'disponible en data/' if status is None else status + ' (se usará la alternativa)'}")
-    print("  Modelo Anthropic:", "ANTHROPIC_API_KEY definida" if os.environ.get("ANTHROPIC_API_KEY") else "sin ANTHROPIC_API_KEY (use --backend openai con Ollama, o el modo 'analyze')")
+    print("  " + _ollama_status())
     print("\nTodo listo." if ok_all else "\nHay fallos: revise la conexión. Si trabaja sin internet, use URBAN_AGENT_OFFLINE=1 con la caché ya poblada.")
     return 0 if ok_all else 1
 
@@ -84,7 +98,7 @@ def cmd_analyze(args) -> int:
 def cmd_ask(args) -> int:
     out = Path(args.out)
     try:
-        backend = AnthropicBackend(model=args.model) if args.backend == "anthropic" else OpenAICompatBackend(model=args.model)
+        backend = OllamaBackend(model=args.model)
     except RuntimeError as exc:
         print(f"Error: {exc}")
         return 1
@@ -99,8 +113,10 @@ def cmd_ask(args) -> int:
     v = result["verification"]
     print("\n---")
     print(f"Pasos: {result['steps']} · Fuentes: {len(result['sources'])} · Cifras comprobadas: {v['checked']}")
-    if not v["ok"]:
+    if v["unverified"]:
         print("AVISO: cifras sin respaldo en las herramientas:", ", ".join(v["unverified"]))
+    for mis in v.get("misattributed", []):
+        print(f"AVISO: la cifra {mis['value']} se atribuye a {mis['line_zone']} pero es de {', '.join(mis['belongs_to'])}")
     print("Estado: PENDIENTE DE REVISIÓN HUMANA (ver checklist en el informe).")
     (out / "respuesta.md").write_text(result["answer"] + "\n", encoding="utf-8")
     print(f"Traza completa: {session.run_dir / 'traza.jsonl'}")
@@ -128,10 +144,9 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--out", default="outputs")
     a.set_defaults(fn=cmd_analyze)
 
-    q = sub.add_parser("ask", help="Pregunta en lenguaje natural al agente (necesita un modelo).")
+    q = sub.add_parser("ask", help="Pregunta en lenguaje natural al agente (necesita Ollama con un modelo).")
     q.add_argument("question")
-    q.add_argument("--backend", choices=["anthropic", "openai"], default="anthropic")
-    q.add_argument("--model")
+    q.add_argument("--model", help="Modelo de Ollama (por defecto URBAN_AGENT_MODEL o qwen3:14b).")
     q.add_argument("--out", default="outputs")
     q.set_defaults(fn=cmd_ask)
 
