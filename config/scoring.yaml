@@ -1,0 +1,44 @@
+# Modelo de puntuación de vehículos por zona.
+#
+# IMPORTANTE: esto es un modelo HEURÍSTICO. Los umbrales y los pesos son supuestos
+# del equipo, no parámetros calibrados con datos reales de demanda. Se pueden
+# cambiar aquí; el agente y los informes leen este archivo y lo citan.
+version: 1
+
+# Variación relativa (±) que se aplica a cada peso, uno a uno, para medir si el
+# vehículo recomendado cambia (análisis de sensibilidad).
+sensitivity:
+  delta: 0.30
+
+# Etiqueta de confianza a partir de la sensibilidad y del margen sobre el segundo.
+confidence:
+  high:   {min_robustness: 0.90, min_margin: 10}
+  medium: {min_robustness: 0.70, min_margin: 4}
+
+# Umbrales [valor con puntuación 0, valor con puntuación 1] para cada característica.
+thresholds:
+  cycle_share: [0.02, 0.25]                 # cuota de red con infraestructura ciclista
+  buildings_per_km2: [500, 4000]            # compacidad urbana (proxy de gente y viajes cortos)
+  poi_per_km2: [20, 300]                    # comercios/hostelería/oficinas (proxy de demanda de reparto)
+  openness_buildings_per_km2: [1000, 5000]  # 1 = poca edificación (espacio libre para drones)
+  steepness_p90_pct: [4, 12]                # pendiente p90; ventaja relativa de vehículos aéreos
+
+vehicles:
+  bicicleta:
+    label: "Bicicleta (incluye eléctrica y de carga)"
+    slope_median_pct: [3, 9]        # [llano=1 punto, muy inclinado=0 puntos]
+    use_cases:
+      personas: {flatness: 0.35, infra: 0.30, density: 0.35}
+      bienes:   {flatness: 0.35, infra: 0.25, goods_demand: 0.40}
+  patinete:
+    label: "Patinete eléctrico"
+    slope_median_pct: [2, 7]        # más sensible a la pendiente que la bici
+    use_cases:
+      personas: {flatness: 0.40, infra: 0.30, density: 0.30}
+  dron:
+    label: "Dron de reparto"
+    use_cases:
+      bienes: {goods_demand: 0.40, steepness: 0.25, openness: 0.25, low_infra: 0.10}
+    caveats:
+      - "No se ha verificado la normativa de espacio aéreo (AESA/ENAIRE), el viento ni el ruido."
+      - "La puntuación mide solo idoneidad geográfica, no viabilidad legal ni operativa."

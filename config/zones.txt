@@ -1,0 +1,20 @@
+# Zonas por defecto (una por línea). Se resuelven con Nominatim dentro de Gipuzkoa.
+# Cada zona es un círculo alrededor del punto que devuelve el geocodificador.
+Donostia
+Irun
+Errenteria
+Eibar
+Tolosa
+Zarautz
+Hernani
+Arrasate
+Bergara
+Beasain
+Azpeitia
+Lasarte-Oria
+Hondarribia
+Pasaia
+Gros, Donostia
+Amara, Donostia
+Egia, Donostia
+Altza, Donostia
