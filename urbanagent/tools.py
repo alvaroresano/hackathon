@@ -8,12 +8,15 @@ from .session import Session
 
 LIMITS = [
     "La zona es un círculo alrededor del punto que devuelve el geocodificador, no el límite administrativo.",
-    "La pendiente se estima con una malla de unos 375 m sobre un modelo de elevación de ~90 m: infravalora pendientes locales de calle.",
+    "La pendiente se estima con una malla de 100 m sobre el MDT LiDAR 2017 de 25 m (geoEuskadi); sin él, con malla de 375 m sobre Open-Meteo (~90 m). No capta pendientes locales de una calle concreta.",
+    "Los puntos de la malla con cota <= 0,5 m se tratan como agua y se excluyen de la pendiente.",
+    "La población del círculo (Eustat, 01/01/2025) se reparte por secciones censales en proporción al área: supone población uniforme dentro de cada sección.",
+    "Solo hay población de Gipuzkoa: la parte del círculo en Francia, Navarra o Bizkaia no cuenta (ni en población ni en superficie).",
     "OpenStreetMap tiene cobertura y etiquetado desiguales (sobre todo la infraestructura ciclista).",
-    "Edificios y comercios son proxies de demanda; no son población ni viajes reales.",
+    "Comercios y oficinas son proxies de demanda de reparto; no son pedidos reales.",
     "Los pesos y umbrales son supuestos heurísticos, no calibrados con datos de uso. La sensibilidad solo prueba variaciones de pesos.",
     "Drones: no se ha verificado normativa de espacio aéreo (AESA/ENAIRE), viento ni ruido.",
-    "Esta versión no usa población oficial (Eustat) ni datos de movilidad real (GTFS, aforos).",
+    "No se usan datos de movilidad real por zona (viajes, aforos, GTFS): la Encuesta de Movilidad 2021 solo da el reparto modal por territorio.",
 ]
 
 USE_CASES = ["personas", "bienes"]
@@ -22,8 +25,9 @@ TOOL_SPECS = [
     {
         "name": "get_zone_profile",
         "description": (
-            "Obtiene métricas reales de una zona de Gipuzkoa (pendiente, infraestructura ciclista, edificios, "
-            "comercios, paradas) desde OpenStreetMap y Open-Meteo. Devuelve también los ids de fuente."
+            "Obtiene métricas reales de una zona de Gipuzkoa: pendiente (MDT LiDAR de geoEuskadi), población en el "
+            "círculo (Eustat, secciones censales), infraestructura ciclista, edificios, comercios y paradas "
+            "(OpenStreetMap). Devuelve también los ids de fuente."
         ),
         "input_schema": {
             "type": "object",
@@ -87,6 +91,7 @@ def _zone_result(place: str, use_case: str, radius_m: int, session: Session) -> 
         "resolved_as": profile["resolved_as"],
         "radius_m": radius_m,
         "metrics": profile["metrics"],
+        "elevation_source": profile.get("elevation_source"),
         **analysis,
         "source_ids": profile["source_ids"],
     }
@@ -114,15 +119,24 @@ def _tool_compare(args: dict, session: Session) -> dict:
                 {
                     "place": place,
                     "recommended": r["recommended"],
+                    "suitable": r["suitable"],
                     "score": r["ranking"][0]["score"],
+                    "runner_up": r["ranking"][1]["vehicle"] if len(r["ranking"]) > 1 else None,
                     "margin": r["margin"],
                     "robustness": r["robustness"],
                     "confidence": r["confidence"],
                     "quality_flags": r["quality_flags"],
                     "median_slope_pct": r["metrics"]["slope_median_pct"],
+                    "street_slope_median_pct": r["metrics"].get("street_slope_median_pct"),
+                    "slope_basis": r["slope_basis"],
                     "cycle_share": r["metrics"]["cycle_share"],
                     "buildings_per_km2": r["metrics"]["buildings_per_km2"],
+                    "population": r["metrics"].get("population"),
+                    "pop_per_km2": r["metrics"].get("pop_per_km2"),
+                    "density_basis": r["density_basis"],
+                    "land_share": r["metrics"].get("land_share"),
                     "poi_per_km2": r["metrics"]["poi_per_km2"],
+                    "resolved_as": r["resolved_as"],
                     "source_ids": r["source_ids"],
                 }
             )
@@ -141,12 +155,26 @@ def _tool_explain_method(args: dict, session: Session) -> dict:
             for vid, v in cfg["vehicles"].items()
         },
         "sensitivity_delta": cfg["sensitivity"]["delta"],
+        "min_suitable_score": cfg.get("min_suitable_score", 0),
         "definitions": {
             "cycle_share": "km con infraestructura ciclista en OSM / km de red (calles, ciclovías, peatonales) dentro del radio",
-            "buildings_per_km2": "edificios etiquetados en OSM por km² del círculo",
-            "poi_per_km2": "(comercios + hostelería/servicios + oficinas) por km²",
-            "slope_median_pct": "mediana de la pendiente entre puntos vecinos de una malla de elevación",
+            "population": "habitantes estimados dentro del círculo: población de cada sección censal (Eustat, 01/01/2025) por la fracción de su área que cae dentro",
+            "pop_per_km2": "population / km² de tierra del círculo cubierta por secciones censales de Gipuzkoa",
+            "buildings_per_km2": "edificios etiquetados en OSM por km² de tierra del círculo (o del círculo entero si no hay secciones)",
+            "poi_per_km2": "(comercios + hostelería/servicios + oficinas) por km² de tierra del círculo",
+            "slope_median_pct": "pendiente del TERRENO: mediana entre puntos vecinos de la malla de elevación, sin puntos de agua (incluye laderas sin calles)",
+            "slope_p90_pct": "percentil 90 de la pendiente del terreno: rugosidad del relieve (se usa para el dron)",
+            "street_slope_median_pct": "pendiente de las CALLES: mediana ponderada por longitud de tramos de >= 50 m de calles y vías ciclistas de OSM, con cotas del MDT (sin puentes ni túneles). Es la que usan bici y patinete",
+            "street_share_over_6pct": "fracción de la longitud de calles con tramos de más del 6 %",
+            "land_share": "fracción del círculo cubierta por secciones censales de Gipuzkoa (el resto es mar o territorio vecino)",
+            "suitable": "false si la mejor puntuación no llega a min_suitable_score: ningún vehículo encaja bien",
+            "density": "característica de densidad: usa pop_per_km2 si existe; si no, buildings_per_km2",
         },
+        "not_available": [
+            "Población municipal total (la herramienta da la población dentro del círculo de la zona, no la del municipio).",
+            "Viajes reales por modo en cada zona.",
+            "Normativa de drones por zona (ENAIRE).",
+        ],
         "zone_definition": DEFINITION_NOTE,
         "limits": LIMITS,
     }

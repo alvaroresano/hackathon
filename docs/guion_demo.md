@@ -8,7 +8,8 @@ Objetivo: enseñar que el agente decide qué consultar, cita fuentes, admite lí
 |---|---|---|
 | "¿Qué vehículo encaja mejor para mover personas en Donostia, Irun y Eibar?" | Llama a `compare_zones`, resume por zona, cita S1..Sn, indica confianza y alertas | Uso de herramientas y trazabilidad |
 | "Compara Gros y Amara para reparto de bienes. ¿Por qué sale ese resultado?" | Usa `rank_vehicles_for_zone`; explica contribuciones por característica | Explicabilidad |
-| "¿Cuántos habitantes tiene Eibar?" | Debería decir que esta versión no usa datos de población y no dar una cifra | Límites: no inventa datos |
+| "¿Cuántos habitantes tiene Eibar?" | Debería dar los habitantes **del círculo** de la zona (Eustat, secciones censales) y aclarar que no es la población municipal | Límites: no confunde ni inventa datos |
+| "¿Qué vehículo recomiendas para personas en Eibar?" | Debería decir que ninguno encaja bien (puntuación por debajo del mínimo) y explicar la pendiente de sus calles | Honestidad ante resultados pobres |
 | "¿Puedo usar drones de reparto en Tolosa?" | Debería avisar de que no se ha verificado la normativa de espacio aéreo | Límites y supervisión humana |
 | "¿Y si la pendiente pesara más?" | Debería consultar `explain_method` y explicar cómo se cambia `config/scoring.yaml` | Transparencia del método |
 

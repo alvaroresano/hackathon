@@ -13,13 +13,15 @@ Personas técnicas o responsables de movilidad que quieren una primera comparaci
 
 ## Qué hace el agente
 1. Localiza la zona (Nominatim) y mide un círculo de radio configurable a su alrededor.
-2. Estima la pendiente (Open-Meteo, malla de elevación) y cuenta km de calles e infraestructura ciclista, edificios, comercios, oficinas y paradas (Overpass/OpenStreetMap).
-3. Puntúa cada vehículo con un modelo de pesos editable.
-4. Prueba la robustez de la recomendación variando los pesos ±30 %.
-5. Responde citando fuentes, confianza, alertas y límites.
+2. Mide la pendiente de las calles y del terreno con el MDT LiDAR de 25 m de geoEuskadi (sin él, con Open-Meteo), excluyendo el mar.
+3. Estima los habitantes del círculo con la población por sección censal de Eustat (01/01/2025).
+4. Cuenta km de calles e infraestructura ciclista, edificios, comercios, oficinas y paradas (Overpass/OpenStreetMap).
+5. Puntúa cada vehículo con un modelo de pesos editable. Si ninguno llega a la puntuación mínima, lo dice.
+6. Prueba la robustez de la recomendación variando los pesos ±30 %.
+7. Responde citando fuentes, confianza, alertas y límites.
 
 ## Datos y fuentes
-OpenStreetMap vía Nominatim y Overpass (ODbL) · Open-Meteo Elevation API (basada en Copernicus DEM, ~90 m).
+OpenStreetMap vía Nominatim y Overpass (ODbL) · MDT LiDAR 2017 de 25 m (geoEuskadi) · Secciones censales (geoEuskadi/Eustat) y población por sección a 01/01/2025 (Eustat) · Open-Meteo Elevation API como alternativa (Copernicus DEM, ~90 m). Procedencia y fechas en `data/fuentes.yaml`; calibración en `docs/calibracion.md`.
 
 ## Modelo de lenguaje
 [modelo usado: p. ej. Claude Sonnet 5.5 vía API, o modelo local con Ollama]. El modelo decide qué herramientas llamar y redacta la respuesta; **no calcula**: todas las cifras salen de las herramientas.

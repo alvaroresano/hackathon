@@ -8,7 +8,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import sources
+from . import local_data, sources
 from .agent import AnthropicBackend, OpenAICompatBackend, run_agent
 from .http import DataUnavailable
 from .report import render_html, render_markdown
@@ -50,6 +50,8 @@ def cmd_doctor(args) -> int:
         lambda: "%s elementos de prueba" % len(sources.overpass('[out:json][timeout:25];node["amenity"="drinking_water"](around:500,43.3183,-1.9812);out count;')[0]["elements"]),
     )
     print()
+    for name, status in (("MDT LiDAR 25 m (pendiente)", local_data.dem_status()), ("Secciones y población Eustat", local_data.sections_status())):
+        print(f"  {'OK   ' if status is None else 'AVISO'} {name}: {'disponible en data/' if status is None else status + ' (se usará la alternativa)'}")
     print("  Modelo Anthropic:", "ANTHROPIC_API_KEY definida" if os.environ.get("ANTHROPIC_API_KEY") else "sin ANTHROPIC_API_KEY (use --backend openai con Ollama, o el modo 'analyze')")
     print("\nTodo listo." if ok_all else "\nHay fallos: revise la conexión. Si trabaja sin internet, use URBAN_AGENT_OFFLINE=1 con la caché ya poblada.")
     return 0 if ok_all else 1

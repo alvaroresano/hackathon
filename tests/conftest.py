@@ -8,6 +8,8 @@ def _isolated_env(tmp_path, monkeypatch):
     """Cada test usa su propia caché y nunca toca la red."""
     monkeypatch.setenv("URBAN_AGENT_CACHE", str(tmp_path / "cache"))
     monkeypatch.delenv("URBAN_AGENT_OFFLINE", raising=False)
+    # Los datos locales (MDT, secciones) no se usan salvo en los tests que los simulan.
+    monkeypatch.setenv("URBAN_AGENT_NO_LOCAL", "1")
     http._last_call.clear()
 
 

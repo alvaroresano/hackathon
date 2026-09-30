@@ -1,0 +1,19 @@
+# Entorno y secretos
+.venv/
+venv/
+.env
+.env.*
+
+# Caché HTTP y salidas generadas
+.cache/
+outputs*
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Datos grandes: se descargan con scripts/descargar_datos.sh
+data/*.zip
+data/mdt25/
+data/secciones_eustat/

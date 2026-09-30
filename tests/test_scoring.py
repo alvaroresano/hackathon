@@ -63,4 +63,23 @@ def test_close_call_lowers_confidence():
 
 def test_quality_flags_for_sparse_data():
     flags = scoring.quality_flags(synthetic_metrics(buildings=20, network_km=2.0, slope_pairs=10))
-    assert len(flags) == 3
+    assert len(flags) == 4  # las tres anteriores + "sin población oficial"
+    assert any("Sin población oficial" in f for f in flags)
+
+
+def test_density_uses_population_when_available():
+    th = CFG["thresholds"]
+    vcfg = CFG["vehicles"]["bicicleta"]
+    lo, hi = th["pop_per_km2"]
+    f = scoring.compute_features(synthetic_metrics(pop_per_km2=float(hi), buildings_per_km2=0.0), vcfg, th)
+    assert f["density"] == 1.0 and f["openness"] == 0.0
+    f2 = scoring.compute_features(synthetic_metrics(pop_per_km2=float(lo), buildings_per_km2=1e6), vcfg, th)
+    assert f2["density"] == 0.0
+
+
+def test_low_best_score_is_not_suitable():
+    steep = synthetic_metrics(slope_median_pct=15.0, cycle_share=0.0, buildings_per_km2=100.0)
+    r = scoring.analyze(steep, "personas", CFG)
+    assert r["ranking"][0]["score"] < CFG["min_suitable_score"]
+    assert r["suitable"] is False
+    assert scoring.analyze(synthetic_metrics(), "personas", CFG)["suitable"] is True

@@ -102,3 +102,42 @@ def test_slope_needs_enough_points():
     pts = [{"i": 0, "j": 0, "lat": 0, "lon": 0, "inside": True}]
     with pytest.raises(DataUnavailable):
         profile.slope_stats(pts, [1.0])
+
+
+def test_pick_place_prefers_boundary_over_station():
+    # orden y categorías como en la respuesta real de Nominatim para 'Egia, Donostia' (30-sep-2026)
+    results = [
+        {"category": "railway", "type": "station", "display_name": "Donostia / San Sebastián, ... Egia"},
+        {"category": "boundary", "type": "administrative", "display_name": "Egia, Ipar-Ekialdea, Donostia"},
+    ]
+    assert sources.pick_place(results)["category"] == "boundary"
+    assert sources.pick_place([{"category": "highway", "display_name": "x"}])["display_name"] == "x"
+
+
+def test_pick_place_prefers_town_node_over_municipal_boundary():
+    # respuesta real de Nominatim para 'Bergara' (30-sep-2026): el punto del límite queda fuera del casco
+    results = [
+        {"category": "boundary", "type": "administrative", "lat": "43.12486", "lon": "-2.42949"},
+        {"category": "place", "type": "town", "lat": "43.11754", "lon": "-2.41334"},
+    ]
+    assert sources.pick_place(results)["type"] == "town"
+
+
+def test_street_grades_weighted_median_and_skips_bridges():
+    # calle de 400 m hacia el norte con pendiente 4 %, más un puente muy inclinado que se ignora
+    north = [offset_point(*CENTER, d, 0) for d in range(0, 401, 50)]
+    bridge = [offset_point(*CENTER, 0, d) for d in range(0, 401, 50)]
+    data = {"elements": [
+        {"type": "way", "tags": {"highway": "residential"}, "geometry": [{"lat": a, "lon": b} for a, b in north]},
+        {"type": "way", "tags": {"highway": "primary", "bridge": "yes"}, "geometry": [{"lat": a, "lon": b} for a, b in bridge]},
+    ]}
+    elev = lambda lats, lons: [100 + (la - CENTER[0]) * 111195 * 0.04 for la in lats]
+    g = profile.street_grades(data, CENTER, 1500, elev)
+    assert g is None  # 400 m medidos < 500 m mínimos
+
+    long_north = [offset_point(*CENTER, d, 0) for d in range(-1000, 1001, 50)]
+    data["elements"][0]["geometry"] = [{"lat": a, "lon": b} for a, b in long_north]
+    g = profile.street_grades(data, CENTER, 1500, elev)
+    assert g["street_slope_median_pct"] == pytest.approx(4.0, abs=0.1)
+    assert g["street_share_over_6pct"] == 0
+    assert g["street_slope_km"] == pytest.approx(2.0, abs=0.05)

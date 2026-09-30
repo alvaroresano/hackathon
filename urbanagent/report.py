@@ -8,7 +8,8 @@ from .tools import LIMITS
 
 VERIFY_CHECKLIST = [
     "Abrir en OpenStreetMap 2-3 zonas y comprobar que el carril bici etiquetado coincide con la realidad.",
-    "Comprobar que el punto geocodificado de cada zona está donde se espera (revisar 'resolved_as').",
+    "Comprobar que el punto geocodificado de cada zona está donde se espera (columna 'Resuelto como').",
+    "En zonas costeras o de frontera, tener en cuenta qué parte del círculo es tierra de Gipuzkoa (columna 'Tierra').",
     "Revisar las zonas con confianza 'baja' o con alertas de calidad de datos antes de sacar conclusiones.",
     "Si se considera el dron: consultar la normativa de espacio aéreo (AESA/ENAIRE) de la zona.",
     "Decidir si los pesos de config/scoring.yaml reflejan las prioridades reales antes de usar el resultado.",
@@ -17,6 +18,17 @@ VERIFY_CHECKLIST = [
 
 def _vehicle_label(cfg: dict, vid: str) -> str:
     return cfg["vehicles"][vid]["label"]
+
+
+def _verdict(cfg: dict, z: dict) -> str:
+    """Recomendación, o aviso de que ningún vehículo alcanza la puntuación mínima."""
+    if z.get("suitable", True):
+        return _vehicle_label(cfg, z["recommended"])
+    return f"Ninguno adecuado (mejor: {_vehicle_label(cfg, z['recommended'])})"
+
+
+def _fmt(v) -> str:
+    return "—" if v is None else f"{v}"
 
 
 def render_markdown(results: dict, session, question: str = "") -> str:
@@ -42,17 +54,28 @@ def render_markdown(results: dict, session, question: str = "") -> str:
     for z in sorted(zones, key=lambda x: -x["score"]):
         margin = "—" if z["margin"] is None else f"{z['margin']}"
         lines.append(
-            f"| {z['place']} | {_vehicle_label(cfg, z['recommended'])} | {z['score']} | {margin} | "
+            f"| {z['place']} | {_verdict(cfg, z)} | {z['score']} | {margin} | "
             f"{z['robustness']} | {z['confidence']} | {len(z['quality_flags'])} |"
         )
     if errors:
         lines += ["", "### Zonas que no se pudieron analizar", ""]
         lines += [f"- **{e['place']}**: {e['error']}" for e in errors]
 
-    lines += ["", "## Métricas medidas", "", "| Zona | Pendiente mediana % | Cuota infra. ciclista | Edificios/km² | Comercios y servicios/km² |", "|---|---:|---:|---:|---:|"]
+    min_score = cfg.get("min_suitable_score", 0)
+    lines += [
+        "",
+        f"\"Ninguno adecuado\": la mejor puntuación no llega a {min_score} sobre 100.",
+        "",
+        "## Métricas medidas",
+        "",
+        "| Zona | Resuelto como | Pendiente calles % (mediana) | Pendiente terreno % (mediana) | Cuota infra. ciclista | Habitantes en el círculo | Hab./km² | Tierra | Edificios/km² | Comercios y servicios/km² |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ]
     for z in zones:
         lines.append(
-            f"| {z['place']} | {z['median_slope_pct']} | {z['cycle_share']} | {z['buildings_per_km2']} | {z['poi_per_km2']} |"
+            f"| {z['place']} | {z.get('resolved_as', '')} | {_fmt(z.get('street_slope_median_pct'))} | {z['median_slope_pct']} | {z['cycle_share']} | "
+            f"{_fmt(z.get('population'))} | {_fmt(z.get('pop_per_km2'))} | {_fmt(z.get('land_share'))} | "
+            f"{z['buildings_per_km2']} | {z['poi_per_km2']} |"
         )
 
     flagged = [z for z in zones if z["quality_flags"]]
@@ -61,6 +84,12 @@ def render_markdown(results: dict, session, question: str = "") -> str:
         for z in flagged:
             lines.append(f"- **{z['place']}**: " + " ".join(z["quality_flags"]))
 
+    lines += [
+        "",
+        "Bici y patinete usan la pendiente de las calles (MDT de 25 m muestreado sobre las calles de OSM). "
+        "La del terreno incluye laderas sin calles y solo interviene en el dron (percentil 90). "
+        "\"Tierra\" es la fracción del círculo con secciones censales de Gipuzkoa; las densidades se calculan sobre ella.",
+    ]
     lines += ["", "## Método y supuestos", "", "Pesos por caso de uso (editables en `config/scoring.yaml`):", ""]
     for vid, v in cfg["vehicles"].items():
         w = v["use_cases"].get(results["use_case"])
@@ -90,7 +119,7 @@ def render_html(results: dict, session, question: str = "") -> str:
         width = max(2, min(100, z["score"]))
         rows.append(
             "<tr>"
-            f"<td>{esc(z['place'])}</td><td>{esc(_vehicle_label(cfg, z['recommended']))}</td>"
+            f"<td>{esc(z['place'])}</td><td>{esc(_verdict(cfg, z))}</td>"
             f"<td><div class='bar'><span style='width:{width}%'></span></div>{z['score']}</td>"
             f"<td>{'—' if z['margin'] is None else z['margin']}</td><td>{z['robustness']}</td>"
             f"<td class='c-{esc(z['confidence'])}'>{esc(z['confidence'])}</td>"

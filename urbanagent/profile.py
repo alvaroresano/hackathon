@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 import statistics
 
-from . import sources
+from . import local_data, sources
 from .geo import grid_points, haversine_m, percentile, polyline_length_within
 from .http import DataUnavailable
 from .session import Session
@@ -82,6 +82,74 @@ def parse_infra(data: dict, center: tuple[float, float], radius_m: float) -> dic
     }
 
 
+# Tramos de calle de al menos esta longitud para medir su pendiente con el MDT de 25 m.
+STREET_SEGMENT_M = 50.0
+STEEP_STREET_PCT = 6.0
+
+
+def _is_elevated(tags: dict) -> bool:
+    """Puentes y túneles: el MDT da la cota del terreno, no la de la vía."""
+    return tags.get("bridge", "no") != "no" or tags.get("tunnel", "no") != "no"
+
+
+def street_grades(data: dict, center: tuple[float, float], radius_m: float, elev_at) -> dict | None:
+    """Pendiente de las calles y vías ciclistas dentro del radio, muestreando el MDT en sus vértices.
+
+    Cada vía se recorre acumulando tramos hasta STREET_SEGMENT_M; la pendiente de cada tramo es
+    |Δcota| / longitud y se pondera por su longitud. Se descartan puentes, túneles y agua.
+    `elev_at(lats, lons)` devuelve la cota de cada punto (o None).
+    """
+    ways = []
+    for el in data.get("elements", []):
+        if el.get("type") != "way":
+            continue
+        tags = el.get("tags") or {}
+        is_cyc, _, is_street = classify_way(tags)
+        if not (is_street or is_cyc) or _is_elevated(tags):
+            continue
+        coords = [(p["lat"], p["lon"]) for p in el.get("geometry") or []]
+        coords = [c for c in coords if haversine_m(c[0], c[1], *center) <= radius_m]
+        if len(coords) >= 2:
+            ways.append(coords)
+    if not ways:
+        return None
+    flat = [c for w in ways for c in w]
+    elev_flat = elev_at([c[0] for c in flat], [c[1] for c in flat])
+    grades: list[tuple[float, float]] = []  # (pendiente %, longitud m)
+    k = 0
+    for w in ways:
+        zs = elev_flat[k : k + len(w)]
+        k += len(w)
+        start_z, acc = None, 0.0
+        for i in range(len(w)):
+            z = zs[i]
+            if z is None or local_data.is_water(z):
+                start_z, acc = None, 0.0
+                continue
+            if start_z is None:
+                start_z, acc = z, 0.0
+                continue
+            acc += haversine_m(*w[i - 1], *w[i])
+            if acc >= STREET_SEGMENT_M:
+                grades.append((abs(z - start_z) / acc * 100, acc))
+                start_z, acc = z, 0.0
+    total = sum(length for _, length in grades)
+    if total < 500:
+        return None
+    grades.sort()
+    half, run, median = total / 2, 0.0, grades[-1][0]
+    for g, length in grades:
+        run += length
+        if run >= half:
+            median = g
+            break
+    return {
+        "street_slope_median_pct": median,
+        "street_share_over_6pct": sum(length for g, length in grades if g > STEEP_STREET_PCT) / total,
+        "street_slope_km": total / 1000,
+    }
+
+
 def parse_counts(data: dict) -> dict:
     totals = [int(e["tags"]["total"]) for e in data.get("elements", []) if e.get("type") == "count"]
     if len(totals) != len(COUNT_KEYS):
@@ -92,6 +160,11 @@ def parse_counts(data: dict) -> dict:
 
 
 def slope_stats(points: list[dict], elevs: list[float | None]) -> dict:
+    """Pendiente entre vecinos de la malla. Los puntos de agua (cota <= 0,5 m) se excluyen."""
+    inside = [e for p, e in zip(points, elevs) if p["inside"]]
+    water = sum(1 for e in inside if local_data.is_water(e))
+    no_data = sum(1 for e in inside if e is None)
+    elevs = [None if local_data.is_water(e) else e for e in elevs]
     grid = {(p["i"], p["j"]): (p, e) for p, e in zip(points, elevs)}
     slopes: list[float] = []
     for (i, j), (p, e) in grid.items():
@@ -112,10 +185,46 @@ def slope_stats(points: list[dict], elevs: list[float | None]) -> dict:
         "slope_pairs": len(slopes),
         "elev_min_m": min(valid),
         "elev_max_m": max(valid),
+        "grid_points_inside": len(inside),
+        "grid_points_water": water,
+        "grid_points_no_data": no_data,
     }
 
 
-def build_profile(place: str, session: Session, radius_m: int = 1500, grid_n: int = 9) -> dict:
+def _elevations(pts: list[dict], session: Session) -> tuple[list[float | None], list[str], str]:
+    """Elevaciones de la malla: MDT local de geoEuskadi si está disponible; si no, Open-Meteo."""
+    if local_data.dem_status() is None:
+        dem = local_data.dem()
+        elevs = [dem.sample_xy(*local_data.to_utm(p["lat"], p["lon"])) for p in pts]
+        m = local_data.source_meta("mdt")
+        sid = session.prov.add("elevación", m["provider"], m, "Malla de puntos para estimar la pendiente.", m["license"])
+        return elevs, [sid], "mdt_lidar_25m"
+    elevs, metas = sources.elevations([(p["lat"], p["lon"]) for p in pts])
+    ids = [
+        session.prov.add(
+            "elevación", "Open-Meteo Elevation API", m, "Malla de puntos para estimar la pendiente.",
+            sources.LICENSES["open-meteo"],
+        )
+        for m in metas
+    ]
+    return elevs, ids, "open_meteo_90m"
+
+
+def _population(center: tuple[float, float], radius_m: int, session: Session) -> tuple[dict | None, list[str]]:
+    if local_data.sections_status() is not None:
+        return None, []
+    res = local_data.sections().in_circle(*local_data.to_utm(*center), radius_m)
+    ids = []
+    for key, note in (
+        ("poblacion", "Habitantes por sección censal."),
+        ("secciones", "Límites de sección para repartir la población en el círculo."),
+    ):
+        m = local_data.source_meta(key)
+        ids.append(session.prov.add("población", m["provider"], m, note, m["license"]))
+    return res, ids
+
+
+def build_profile(place: str, session: Session, radius_m: int = 1500, grid_n: int | None = None) -> dict:
     key = (place.strip().lower(), radius_m)
     if key in session.profiles:
         return session.profiles[key]
@@ -128,15 +237,12 @@ def build_profile(place: str, session: Session, radius_m: int = 1500, grid_n: in
         )
     ]
 
-    pts, _ = grid_points(center, radius_m, grid_n)
-    elevs, m_elevs = sources.elevations([(p["lat"], p["lon"]) for p in pts])
-    for m in m_elevs:
-        ids.append(
-            session.prov.add(
-                "elevación", "Open-Meteo Elevation API", m, "Malla de puntos para estimar la pendiente.",
-                sources.LICENSES["open-meteo"],
-            )
-        )
+    # Con el MDT de 25 m (local, sin coste de API) la malla es de 100 m; con Open-Meteo, de 375 m.
+    if grid_n is None:
+        grid_n = int(2 * radius_m / 100) + 1 if local_data.dem_status() is None else 9
+    pts, step = grid_points(center, radius_m, grid_n)
+    elevs, elev_ids, elev_source = _elevations(pts, session)
+    ids += elev_ids
     slopes = slope_stats(pts, elevs)
 
     d_infra, m_infra = sources.overpass(infra_query(center[0], center[1], radius_m))
@@ -147,6 +253,15 @@ def build_profile(place: str, session: Session, radius_m: int = 1500, grid_n: in
         )
     )
     infra = parse_infra(d_infra, center, radius_m)
+    grades = None
+    if elev_source == "mdt_lidar_25m":
+        dem = local_data.dem()
+
+        def elev_at(lats, lons):
+            xs, ys = local_data.to_utm_many(lats, lons)
+            return [dem.sample_xy(x, y) for x, y in zip(xs, ys)]
+
+        grades = street_grades(d_infra, center, radius_m, elev_at)
 
     d_counts, m_counts = sources.overpass(counts_query(center[0], center[1], radius_m))
     ids.append(
@@ -157,11 +272,17 @@ def build_profile(place: str, session: Session, radius_m: int = 1500, grid_n: in
     )
     counts = parse_counts(d_counts)
 
-    area = math.pi * (radius_m / 1000) ** 2
+    pop, pop_ids = _population(center, radius_m, session)
+    ids += pop_ids
+
+    circle_km2 = math.pi * (radius_m / 1000) ** 2
+    # Con secciones censales, las densidades se calculan sobre la tierra del círculo (sin mar).
+    area = pop["land_km2"] if pop and pop["land_km2"] > 0.05 else circle_km2
     poi = counts["shops"] + counts["food_amenities"] + counts["offices"]
     network = infra["network_km"]
     metrics = {
-        "area_km2": round(area, 2),
+        "area_km2": round(circle_km2, 2),
+        "density_area_km2": round(area, 2),
         **{k: round(v, 2) if isinstance(v, float) else v for k, v in slopes.items()},
         "street_km": round(infra["street_km"], 2),
         "cycle_km": round(infra["cycle_km"], 2),
@@ -174,12 +295,26 @@ def build_profile(place: str, session: Session, radius_m: int = 1500, grid_n: in
         "poi_per_km2": round(poi / area, 1),
         "transit_stops_per_km2": round((counts["bus_stops"] + counts["rail_stops"]) / area, 1),
     }
+    if grades:
+        metrics.update({k: round(v, 3 if "share" in k else 2) for k, v in grades.items()})
+    if pop:
+        metrics.update(
+            {
+                "population": round(pop["population"]),
+                "pop_per_km2": round(pop["population"] / area, 1),
+                "land_share": round(pop["circle_share_in_sections"], 3),
+                "census_sections": pop["sections"],
+            }
+        )
     profile = {
         "place": place,
         "resolved_as": geo["display_name"],
         "center": {"lat": round(center[0], 5), "lon": round(center[1], 5)},
         "radius_m": radius_m,
         "metrics": metrics,
+        "elevation_source": elev_source,
+        "grid_step_m": round(step),
+        "population_source": "eustat_secciones_2025" if pop else None,
         "definition_note": DEFINITION_NOTE,
         "source_ids": ids,
     }

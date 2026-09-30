@@ -15,18 +15,26 @@ confidence:
   high:   {min_robustness: 0.90, min_margin: 10}
   medium: {min_robustness: 0.70, min_margin: 4}
 
+# Si la mejor puntuación no llega a este valor, la zona se marca como "ningún vehículo adecuado"
+# (se sigue mostrando el ranking, pero no se presenta el primero como recomendación).
+min_suitable_score: 25
+
 # Umbrales [valor con puntuación 0, valor con puntuación 1] para cada característica.
+# La densidad usa pop_per_km2 (Eustat) si hay datos locales; si no, buildings_per_km2 (OSM).
 thresholds:
+# Calibrados el 30-sep-2026 con las 18 zonas reales: ver docs/calibracion.md.
+  pop_per_km2: [1000, 15000]                # habitantes por km² de tierra en el círculo (Eustat)
+  openness_pop_per_km2: [1000, 15000]       # 1 = poca población (espacio libre para drones)
   cycle_share: [0.02, 0.25]                 # cuota de red con infraestructura ciclista
-  buildings_per_km2: [500, 4000]            # compacidad urbana (proxy de gente y viajes cortos)
-  poi_per_km2: [20, 300]                    # comercios/hostelería/oficinas (proxy de demanda de reparto)
-  openness_buildings_per_km2: [1000, 5000]  # 1 = poca edificación (espacio libre para drones)
-  steepness_p90_pct: [4, 12]                # pendiente p90; ventaja relativa de vehículos aéreos
+  buildings_per_km2: [500, 4000]            # solo sin datos de Eustat: compacidad urbana (proxy)
+  poi_per_km2: [10, 400]                    # comercios/hostelería/oficinas por km² de tierra (demanda de reparto)
+  openness_buildings_per_km2: [1000, 5000]  # solo sin datos de Eustat: 1 = poca edificación
+  steepness_p90_pct: [15, 50]               # p90 de la pendiente del TERRENO (malla de 100 m); ventaja del dron
 
 vehicles:
   bicicleta:
     label: "Bicicleta (incluye eléctrica y de carga)"
-    slope_median_pct: [3, 9]        # [llano=1 punto, muy inclinado=0 puntos]
+    slope_median_pct: [3, 9]        # pendiente mediana de CALLES: [llano=1 punto, muy inclinado=0 puntos]
     use_cases:
       personas: {flatness: 0.35, infra: 0.30, density: 0.35}
       bienes:   {flatness: 0.35, infra: 0.25, goods_demand: 0.40}

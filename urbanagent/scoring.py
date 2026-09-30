@@ -21,14 +21,25 @@ def lin(x: float, lo: float, hi: float) -> float:
     return max(0.0, min(1.0, (x - lo) / (hi - lo)))
 
 
+def density_basis(m: dict) -> str:
+    """Qué métrica mide la densidad: población oficial si existe; si no, edificios de OSM."""
+    return "pop_per_km2" if m.get("pop_per_km2") is not None else "buildings_per_km2"
+
+
+def slope_basis(m: dict) -> str:
+    """Pendiente para bici y patinete: la de las calles (MDT) si existe; si no, la del terreno."""
+    return "street_slope_median_pct" if m.get("street_slope_median_pct") is not None else "slope_median_pct"
+
+
 def compute_features(m: dict, vcfg: dict, th: dict) -> dict[str, float]:
     lo, hi = vcfg.get("slope_median_pct", [3, 9])
+    basis = density_basis(m)
     feats = {
-        "flatness": 1 - lin(m["slope_median_pct"], lo, hi),
+        "flatness": 1 - lin(m[slope_basis(m)], lo, hi),
         "infra": lin(m["cycle_share"], *th["cycle_share"]),
-        "density": lin(m["buildings_per_km2"], *th["buildings_per_km2"]),
+        "density": lin(m[basis], *th[basis]),
         "goods_demand": lin(m["poi_per_km2"], *th["poi_per_km2"]),
-        "openness": 1 - lin(m["buildings_per_km2"], *th["openness_buildings_per_km2"]),
+        "openness": 1 - lin(m[basis], *th[f"openness_{basis}"]),
         "steepness": lin(m["slope_p90_pct"], *th["steepness_p90_pct"]),
     }
     feats["low_infra"] = 1 - feats["infra"]
@@ -68,6 +79,16 @@ def quality_flags(m: dict) -> list[str]:
         flags.append("No hay infraestructura ciclista etiquetada en OSM: puede ser real o falta de etiquetado.")
     if m.get("slope_pairs", 0) < 20:
         flags.append("Pocos pares de puntos para estimar la pendiente (<20).")
+    if m.get("land_share") is not None and m["land_share"] < 0.5:
+        flags.append(
+            "Menos de la mitad del círculo es tierra de Gipuzkoa (mar o territorio vecino): "
+            "las densidades se calculan solo sobre la parte en tierra."
+        )
+    inside = m.get("grid_points_inside") or 0
+    if inside and m.get("grid_points_no_data", 0) / inside > 0.2:
+        flags.append("Más del 20 % de la malla de elevación no tiene dato (fuera de la cobertura del MDT).")
+    if m.get("pop_per_km2") is None:
+        flags.append("Sin población oficial: la densidad se aproxima con edificios de OpenStreetMap.")
     return flags
 
 
@@ -109,6 +130,7 @@ def analyze(metrics: dict, use_case: str, cfg: dict) -> dict:
     robustness = same / total if total else 1.0
 
     flags = quality_flags(metrics)
+    min_score = cfg.get("min_suitable_score", 0)
     rows = []
     for vid, (s, contrib, feats) in ranking:
         rows.append(
@@ -125,6 +147,10 @@ def analyze(metrics: dict, use_case: str, cfg: dict) -> dict:
         "use_case": use_case,
         "ranking": rows,
         "recommended": top_id,
+        "suitable": ranking[0][1][0] >= min_score,
+        "min_suitable_score": min_score,
+        "density_basis": density_basis(metrics),
+        "slope_basis": slope_basis(metrics),
         "margin": None if margin is None else round(margin, 1),
         "robustness": round(robustness, 2),
         "sensitivity_delta": delta,

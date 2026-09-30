@@ -1,0 +1,48 @@
+# Procedencia de los datos oficiales descargados a data/.
+# El código lee este archivo para citar cada fuente (id S#) con su URL y fecha de descarga.
+# Rutas relativas a data/. Los archivos grandes no se suben a git: los descarga scripts/descargar_datos.sh.
+
+mdt:
+  file: mdt25/mdt_lidar_2017_25m_etrs89.tif
+  provider: "geoEuskadi (Gobierno Vasco) · MDT LiDAR 2017, 25 m, ETRS89 UTM 30N"
+  url: "ftp://ftp.geo.euskadi.net/lidar/MDE/MAX_ACTUALIDAD/MDT_LIDAR_2017_ETRS89/mdt_lidar_2017_25m_etrs89.zip"
+  downloaded: "2026-09-30"
+  license: "geoEuskadi. Consulte sus condiciones de uso y cite la fuente."
+  used_for: "pendiente (sustituye a Open-Meteo cuando está disponible)"
+
+secciones:
+  file: secciones_eustat/SECCIONES_EUSTAT_5000_ETRS89.shp
+  provider: "geoEuskadi / Eustat · Secciones censales 1:5.000 (capa actualizada el 18-sep-2026)"
+  url: "https://www.geo.euskadi.eus/cartografia/DatosDescarga/Limites/Unidades_estadisticas/SECCIONES_EUSTAT_5000_ETRS89.zip"
+  downloaded: "2026-09-30"
+  license: "geoEuskadi / Eustat. Consulte sus condiciones de uso y cite la fuente."
+  used_for: "reparto de la población en el círculo de cada zona y superficie de tierra"
+
+poblacion:
+  file: xls0011434_c.csv
+  provider: "Eustat · Censo de población y viviendas: población de Gipuzkoa por distritos y secciones censales, 01/01/2025"
+  url: "https://www.eustat.eus/elementos/tbl0011434_c.html"
+  license: "Fuente: Eustat. Cite la fuente."
+  used_for: "habitantes por sección censal (544 secciones, 724.797 habitantes en Gipuzkoa)"
+
+# Datos de validación (no los usa el agente; sirven para contrastar resultados a mano).
+bidegorris_donostia:
+  file: BIDEGORRIA/BIDEGORRIA.shp
+  provider: "Ayuntamiento de Donostia · capa de bidegorris (polígonos, solo Donostia)"
+  url: null
+  downloaded: "2026-09-30"
+  used_for: "contrastar la infraestructura ciclista de OSM en Donostia"
+
+dbizi:
+  file: dbizi.csv
+  provider: "dBizi · estaciones de bicicleta pública de Donostia (ETRS89 UTM 30N)"
+  url: null
+  downloaded: "2026-09-30"
+  used_for: "contraste cualitativo de la recomendación de bici en Donostia"
+
+movilidad_em2021:
+  file: Tablas_EM2021_es_3_Desplazamientos_modos_y_motivos.xlsx
+  provider: "Gobierno Vasco · Encuesta de Movilidad en día laborable 2021, tablas 3 (modos y motivos)"
+  url: "https://www.euskadi.eus/estadisticas-territoriales/"
+  downloaded: "2026-09-30"
+  used_for: "contexto: reparto modal a nivel de territorio histórico (no hay detalle por municipio)"

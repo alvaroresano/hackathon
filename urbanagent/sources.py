@@ -27,13 +27,31 @@ def _inside_viewbox(lat: float, lon: float) -> bool:
     return left <= lon <= right and bottom <= lat <= top
 
 
+# Categorías de Nominatim por orden de preferencia: el nodo 'place' marca el núcleo habitado;
+# el punto de un 'boundary' puede caer lejos del casco (Bergara: ~1,5 km).
+PLACE_CATEGORIES = ("place", "boundary")
+
+
+def pick_place(results: list[dict]) -> dict:
+    """Mejor candidato de Nominatim: primero un nodo de lugar, después un límite; si no, el primero.
+
+    Ejemplos reales (30-sep-2026): 'Egia, Donostia' devuelve primero la estación de Atotxa y después
+    el límite del barrio; 'Bergara' devuelve el límite municipal y después el nodo place=town del casco.
+    """
+    for cat in PLACE_CATEGORIES:
+        for r in results:
+            if r.get("category") == cat:
+                return r
+    return results[0]
+
+
 def geocode(place: str) -> tuple[dict, dict]:
     """Resuelve un topónimo dentro de Gipuzkoa. Devuelve (resultado, meta)."""
     left, top, right, bottom = GIPUZKOA_VIEWBOX
     params = {
         "q": place,
         "format": "jsonv2",
-        "limit": 1,
+        "limit": 5,
         "countrycodes": "es",
         "viewbox": f"{left},{top},{right},{bottom}",
         "bounded": 1,
@@ -41,7 +59,7 @@ def geocode(place: str) -> tuple[dict, dict]:
     data, meta = request_json("GET", NOMINATIM_URL, params=params)
     if not data:
         raise LookupError(f"No se encontró '{place}' dentro de Gipuzkoa.")
-    r = data[0]
+    r = pick_place(data)
     lat, lon = float(r["lat"]), float(r["lon"])
     if not _inside_viewbox(lat, lon):
         raise LookupError(f"'{place}' se resolvió fuera de Gipuzkoa ({lat:.4f}, {lon:.4f}).")
