@@ -167,7 +167,7 @@ config/       scoring.yaml · zones.txt
 data/         fuentes.yaml (procedencia) · población Eustat · datos de validación · MDT y secciones (descargados)
 scripts/      descargar_datos.sh · validar_bidegorris.py (OSM frente a la capa municipal de Donostia)
 tests/        62 pruebas (datos sintéticos; no tocan la red ni data/)
-docs/         resultados/ (informes y respuestas reales) · calibracion.md · validacion.md · limites.md · ficha_sistema.md · explicacion_criterios.md · guion_demo.md · plan_4_dias.md
+docs/         resultados/ (informes y respuestas reales) · calibracion.md · validacion.md · limites.md · ficha_sistema.md · explicacion_criterios.md · guion_demo.md
 ```
 
 Pruebas: `python -m pytest -q`.
